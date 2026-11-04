@@ -1,0 +1,7 @@
+# Allowlist: the build context contains only what the image needs.
+*
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!src/

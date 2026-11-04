@@ -606,3 +606,67 @@ have no Pub/Sub project.
 - A reviewer can see the full flow, including retries and the DLQ, in seconds, without GCP.
 - In memory mode, published messages accumulate in memory. That is fine for local use, and this mode is
   never used on Cloud Run.
+
+---
+
+## ADR-016: Container image and CI
+
+**Context.** Cloud Run runs a container that must listen on `$PORT`, start fast, and stop cleanly within
+about 10 s of SIGTERM. The spec asks for `docker build` / `docker run`. CI should block broken changes
+and avoid supply-chain risk.
+
+**Decision.**
+
+- **Multi-stage Dockerfile.**
+  - The `build` stage runs `npm ci` (with dev dependencies) and `tsc`.
+  - The `runtime` stage runs `npm ci --omit=dev` and copies only `dist/`.
+  - The final image has no TypeScript, no tests and no dev tools: `/app` holds only `dist`,
+    `node_modules` and `package*.json`, which the smoke test checks.
+- **Base image `node:24-slim`, pinned by digest**, for reproducible builds. Bumps are deliberate, ideally
+  through Dependabot or Renovate.
+- **Runs as the unprivileged `node` user.** A compromised process can't modify the image filesystem or
+  escalate as root.
+- **The exec-form `CMD ["node", "dist/server.js"]`** makes node PID 1, so it receives SIGTERM directly.
+  The shell form would put `/bin/sh` in between, and the signal would not be forwarded.
+- **`npm ci`, not `npm install`:** an exact install from the lockfile that fails if it disagrees with
+  `package.json`, so CI and the image get what was tested.
+- **`.dockerignore` is an allowlist** (`*`, then `!package*.json`, `!tsconfig*.json`, `!src/`). Nothing
+  outside these files can reach the build context: no `.git`, no `.env`, no local notes.
+- **`scripts/docker-smoke.sh`** runs the image and checks:
+  - `/health`;
+  - a valid sample returns 200 and the missing-Order-ID sample returns 400;
+  - the process is not root;
+  - the contents of `/app`;
+  - **graceful shutdown**: `docker stop` sends SIGTERM, and the process must exit with code 0 and log
+    "Shutdown complete".
+
+  The same script runs locally and in CI.
+
+- **GitHub Actions (`ci.yml`):**
+  - the `test` job runs `npm ci`, then lint, typecheck, format check, tests with 90% coverage thresholds,
+    and `npm audit --omit=dev --audit-level=high`;
+  - the `docker` job runs the build and the smoke test.
+  - Supporting choices:
+    - `permissions: contents: read` and `persist-credentials: false` keep the token minimal;
+    - **third-party actions are pinned to full commit SHAs**, because a tag can be moved to malicious
+      code (as in the 2025 `tj-actions/changed-files` incident);
+    - Docker is driven by plain `docker` commands rather than more actions, so fewer third-party
+      actions are involved;
+    - concurrency cancels superseded runs.
+- **CI does not push images.** Publishing to Artifact Registry, tagged with the git SHA, happens in the
+  deployment stage.
+
+**Alternatives.**
+
+- **Distroless runtime image:** smaller, no shell, fewer CVEs; the production upgrade. Slim was kept for
+  easier debugging (`docker exec … sh`).
+- **Alpine:** small, but musl libc can cause subtle differences with native modules. There are no native
+  modules here, but slim is the safer default.
+- **Docker `HEALTHCHECK`:** Cloud Run ignores it and uses its own startup and liveness probes, so it is
+  not added.
+
+**Consequences.**
+
+- The image is about 290 MB uncompressed, most of it the Node base image.
+- The full pipeline runs in about 2 minutes, and a broken build, test, format or vulnerable production
+  dependency blocks the merge.
