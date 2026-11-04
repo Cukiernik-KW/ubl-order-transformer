@@ -12,6 +12,10 @@ export default defineConfig(
     languageOptions: {
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
     },
+    rules: {
+      // `const { a: _omitted, ...rest } = obj` is the idiomatic "object without a".
+      "@typescript-eslint/no-unused-vars": ["error", { ignoreRestSiblings: true }],
+    },
   },
   { files: ["**/*.js"], extends: [tseslint.configs.disableTypeChecked] },
   prettier,

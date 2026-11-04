@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Order xmlns:a="urn:oasis:names:specification:ubl:schema:xsd:Order-2"
+       xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+       xmlns:udt="urn:un:unece:uncefact:data:specification:UnqualifiedDataTypesSchemaModule:2"
+       xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+       xmlns:sdt="urn:oasis:names:specification:ubl:schema:xsd:SpecializedDatatypes-2"
+       xmlns="urn:oasis:names:specification:ubl:schema:xsd:Order-2">
+	<cbc:ID>12347</cbc:ID>	 
+	<cbc:IssueDate>2025-01-01</cbc:IssueDate>
+	<cbc:CustomerReference>test-order</cbc:CustomerReference>
+    <cac:BuyerCustomerParty>
+        <cbc:SupplierAssignedAccountID>1234567</cbc:SupplierAssignedAccountID>
+    </cac:BuyerCustomerParty>
+    <cac:SellerSupplierParty />
+    <cac:OrderLine>
+        <cbc:Note>Optional OrderLine Note</cbc:Note>
+        <cac:LineItem>
+            <cbc:ID>1</cbc:ID>
+            <cbc:Quantity unitCode="EA">1</cbc:Quantity>
+            <cac:Item>
+                <cac:SellersItemIdentification>
+                    <cbc:ID>100100</cbc:ID>
+                </cac:SellersItemIdentification>
+            </cac:Item>
+        </cac:LineItem>
+    </cac:OrderLine>
+	<cac:OrderLine>
+        <cbc:Note>Optional OrderLine Note</cbc:Note>
+        <cac:LineItem>
+            <cbc:ID>2</cbc:ID>
+            <cbc:Quantity unitCode="EA">1</cbc:Quantity>
+            <cac:Item>
+                <cac:SellersItemIdentification>
+                    <cbc:ID>100103</cbc:ID>
+                </cac:SellersItemIdentification>
+            </cac:Item>
+        </cac:LineItem>
+    </cac:OrderLine>
+</Order>

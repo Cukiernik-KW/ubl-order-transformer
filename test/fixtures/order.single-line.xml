@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Order xmlns="urn:oasis:names:specification:ubl:schema:xsd:Order-2"
+       xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+       xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
+  <cbc:ID>SINGLE-1</cbc:ID>
+  <cbc:IssueDate>2025-03-15</cbc:IssueDate>
+  <cac:BuyerCustomerParty>
+    <cbc:SupplierAssignedAccountID>7654321</cbc:SupplierAssignedAccountID>
+  </cac:BuyerCustomerParty>
+  <cac:OrderLine>
+    <cac:LineItem>
+      <cbc:ID>1</cbc:ID>
+      <cbc:Quantity unitCode="KGM">2.5</cbc:Quantity>
+      <cac:Item>
+        <cac:SellersItemIdentification>
+          <cbc:ID>000123</cbc:ID>
+        </cac:SellersItemIdentification>
+      </cac:Item>
+    </cac:LineItem>
+  </cac:OrderLine>
+</Order>

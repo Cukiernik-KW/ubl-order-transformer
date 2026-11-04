@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ns0:Order xmlns:ns0="urn:oasis:names:specification:ubl:schema:xsd:Order-2"
+           xmlns:b="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+           xmlns:agg="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
+  <b:ID>12347</b:ID>
+  <b:IssueDate>2025-01-01</b:IssueDate>
+  <b:CustomerReference>test-order</b:CustomerReference>
+  <agg:BuyerCustomerParty>
+    <b:SupplierAssignedAccountID>1234567</b:SupplierAssignedAccountID>
+  </agg:BuyerCustomerParty>
+  <agg:OrderLine>
+    <b:Note>Optional OrderLine Note</b:Note>
+    <agg:LineItem>
+      <b:ID>1</b:ID>
+      <b:Quantity unitCode="EA">1</b:Quantity>
+      <agg:Item>
+        <agg:SellersItemIdentification>
+          <b:ID>100100</b:ID>
+        </agg:SellersItemIdentification>
+      </agg:Item>
+    </agg:LineItem>
+  </agg:OrderLine>
+</ns0:Order>
