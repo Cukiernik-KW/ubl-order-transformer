@@ -15,7 +15,11 @@ const ConfigSchema = z.object({
   PUBLISH_RETRY_BASE_MS: positiveInt(200),
   PUBLISH_RETRY_MAX_MS: positiveInt(5_000),
   PUBLISH_TIMEOUT_MS: positiveInt(5_000),
+  /** memory = per instance (local runs, tests, one instance); firestore = shared by all instances. */
+  IDEMPOTENCY_STORE: z.enum(["memory", "firestore"]).default("memory"),
   IDEMPOTENCY_TTL_SECONDS: positiveInt(86_400),
+  IDEMPOTENCY_COLLECTION: z.string().min(1).default("idempotency"),
+  FIRESTORE_DATABASE_ID: z.string().min(1).default("(default)"),
   MAX_BODY_BYTES: positiveInt(1_048_576),
 });
 

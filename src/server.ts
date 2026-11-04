@@ -1,4 +1,6 @@
 import { InMemoryBroker } from "./adapters/inMemoryBroker.js";
+import { Firestore } from "@google-cloud/firestore";
+import { FirestoreIdempotencyStore } from "./adapters/firestoreIdempotencyStore.js";
 import { InMemoryIdempotencyStore } from "./adapters/inMemoryIdempotencyStore.js";
 import { PubSubPublisher } from "./adapters/pubsubPublisher.js";
 import { createApp } from "./app.js";
@@ -7,6 +9,7 @@ import type { TransformedOrder } from "./domain/types.js";
 import { createLogger, type Logger } from "./observability/logger.js";
 import { createProcessor } from "./pipeline/processor.js";
 import { systemClock } from "./ports/clock.js";
+import type { IdempotencyStore } from "./ports/idempotencyStore.js";
 import type { Publisher } from "./ports/publisher.js";
 
 // Cloud Run sends SIGTERM and kills the container ~10 s later; finish before that.
@@ -28,6 +31,30 @@ function createPublisher(config: Config): {
   return { publisher: broker, close: () => Promise.resolve(), debugBroker: broker };
 }
 
+function createIdempotencyStore(config: Config): {
+  store: IdempotencyStore<TransformedOrder>;
+  close: () => Promise<void>;
+} {
+  const ttlMs = config.IDEMPOTENCY_TTL_SECONDS * 1000;
+  if (config.IDEMPOTENCY_STORE === "firestore") {
+    // ADC on Cloud Run; FIRESTORE_EMULATOR_HOST is honoured by the client for local runs.
+    const firestore = new Firestore({
+      projectId: config.GOOGLE_CLOUD_PROJECT,
+      databaseId: config.FIRESTORE_DATABASE_ID,
+    });
+    const store = new FirestoreIdempotencyStore<TransformedOrder>({
+      firestore,
+      collection: config.IDEMPOTENCY_COLLECTION,
+      ttlMs,
+    });
+    return { store, close: () => firestore.terminate() };
+  }
+  return {
+    store: new InMemoryIdempotencyStore<TransformedOrder>({ ttlMs }),
+    close: () => Promise.resolve(),
+  };
+}
+
 function readConfig(): Config {
   try {
     return loadConfig();
@@ -42,12 +69,11 @@ function main(): void {
   const config = readConfig();
   const logger: Logger = createLogger({ level: config.LOG_LEVEL });
   const { publisher, close: closePublisher, debugBroker } = createPublisher(config);
+  const { store: idempotencyStore, close: closeStore } = createIdempotencyStore(config);
 
   const processMessage = createProcessor({
     publisher,
-    idempotencyStore: new InMemoryIdempotencyStore<TransformedOrder>({
-      ttlMs: config.IDEMPOTENCY_TTL_SECONDS * 1000,
-    }),
+    idempotencyStore,
     clock: systemClock,
     logger,
     outputTopic: config.OUTPUT_TOPIC,
@@ -67,7 +93,12 @@ function main(): void {
   });
   const server = app.listen(config.PORT, () => {
     logger.info(
-      { port: config.PORT, publisher: config.PUBLISHER, outputTopic: config.OUTPUT_TOPIC },
+      {
+        port: config.PORT,
+        publisher: config.PUBLISHER,
+        idempotencyStore: config.IDEMPOTENCY_STORE,
+        outputTopic: config.OUTPUT_TOPIC,
+      },
       "Server listening",
     );
   });
@@ -85,13 +116,16 @@ function main(): void {
 
     // Stop accepting connections; the callback runs once in-flight requests have finished.
     server.close((error) => {
-      closePublisher()
+      Promise.all([closePublisher(), closeStore()])
         .then(() => {
           logger.info("Shutdown complete");
           process.exit(error ? 1 : 0);
         })
         .catch((closeError: unknown) => {
-          logger.error({ err: closeError }, "Failed to flush publisher on shutdown");
+          logger.error(
+            { err: closeError },
+            "Failed to close the publisher or the idempotency store on shutdown",
+          );
           process.exit(1);
         });
     });

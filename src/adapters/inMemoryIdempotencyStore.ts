@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import type { ClaimResult, IdempotencyStore } from "../ports/idempotencyStore.js";
 import { systemClock, type Clock } from "../ports/clock.js";
 
 type Entry<T> =
-  | { state: "in-progress"; expiresAt: number }
+  | { state: "in-progress"; token: string; expiresAt: number }
   | { state: "completed"; result: T; expiresAt: number };
 
 export interface InMemoryIdempotencyStoreOptions {
@@ -14,8 +15,8 @@ export interface InMemoryIdempotencyStoreOptions {
 }
 
 /**
- * Per-instance store, lost on restart. Fine for one instance and for tests; production needs a
- * shared store (Firestore create() or Redis SET NX EX). tryClaim has no await between the read and
+ * Per-instance store, lost on restart: for local runs, tests and a single instance. Deployments
+ * with more instances use FirestoreIdempotencyStore. tryClaim has no await between the read and
  * the write, so on single-threaded Node the check-and-set is atomic.
  */
 export class InMemoryIdempotencyStore<T> implements IdempotencyStore<T> {
@@ -43,23 +44,35 @@ export class InMemoryIdempotencyStore<T> implements IdempotencyStore<T> {
           : { status: "in-progress" },
       );
     }
-    this.entries.set(key, { state: "in-progress", expiresAt: now + this.claimTtlMs });
-    return Promise.resolve({ status: "claimed" });
+    const token = randomUUID();
+    this.entries.set(key, { state: "in-progress", token, expiresAt: now + this.claimTtlMs });
+    return Promise.resolve({ status: "claimed", token });
   }
 
-  complete(key: string, result: T): Promise<void> {
-    const now = this.clock.now().getTime();
-    this.entries.set(key, { state: "completed", result, expiresAt: now + this.ttlMs });
+  complete(key: string, token: string, result: T): Promise<void> {
+    if (this.holds(key, token)) {
+      const now = this.clock.now().getTime();
+      this.entries.set(key, { state: "completed", result, expiresAt: now + this.ttlMs });
+    }
     return Promise.resolve();
   }
 
-  release(key: string): Promise<void> {
-    this.entries.delete(key);
+  release(key: string, token: string): Promise<void> {
+    if (this.holds(key, token)) this.entries.delete(key);
     return Promise.resolve();
   }
 
   get size(): number {
     return this.entries.size;
+  }
+
+  /**
+   * The token alone decides ownership: an expired claim nobody took over is still ours (completing
+   * it records the published output); a takeover issued a new token, so the old one no longer matches.
+   */
+  private holds(key: string, token: string): boolean {
+    const entry = this.entries.get(key);
+    return entry?.state === "in-progress" && entry.token === token;
   }
 
   /** Bounded memory without timers: drop expired entries at most once per claim TTL. */

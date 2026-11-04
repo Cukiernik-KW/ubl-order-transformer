@@ -3,6 +3,7 @@ import { InMemoryBroker } from "../../src/adapters/inMemoryBroker.js";
 import { InMemoryIdempotencyStore } from "../../src/adapters/inMemoryIdempotencyStore.js";
 import type { TransformedOrder } from "../../src/domain/types.js";
 import { createProcessor, type ProcessContext } from "../../src/pipeline/processor.js";
+import type { IdempotencyStore } from "../../src/ports/idempotencyStore.js";
 import type { Publisher } from "../../src/ports/publisher.js";
 import { appMessage, buildOrderXml, readSample } from "../fixtures/index.js";
 import { captureLogger, fixedClock, noSleep } from "../helpers/index.js";
@@ -11,14 +12,19 @@ const OUT = "orders.transformed";
 const DLQ = "orders.failed";
 const http: ProcessContext = { source: "http" };
 
-function setup(options: { publisher?: (broker: InMemoryBroker) => Publisher } = {}) {
+function setup(
+  options: {
+    publisher?: (broker: InMemoryBroker) => Publisher;
+    store?: (store: IdempotencyStore<TransformedOrder>) => IdempotencyStore<TransformedOrder>;
+  } = {},
+) {
   const clock = fixedClock("2026-07-27T12:01:00Z");
   const broker = new InMemoryBroker(clock);
   const store = new InMemoryIdempotencyStore<TransformedOrder>({ ttlMs: 3_600_000, clock });
   const { logger, lines } = captureLogger();
   const processMessage = createProcessor({
     publisher: options.publisher ? options.publisher(broker) : broker,
-    idempotencyStore: store,
+    idempotencyStore: options.store ? options.store(store) : store,
     clock,
     logger,
     outputTopic: OUT,
@@ -240,3 +246,65 @@ describe("processor: observability", () => {
     expect(all).not.toContain("SellersItemIdentification");
   });
 });
+
+describe("processor: idempotency store failures", () => {
+  it("treats a store outage on claim as transient (push nacks, Pub/Sub redelivers)", async () => {
+    const outage = new Error("14 UNAVAILABLE");
+    const { broker, processMessage } = setup({
+      store: (real) => ({ ...bound(real), tryClaim: () => Promise.reject(outage) }),
+    });
+
+    const result = await processMessage(sample(), http);
+    expect(result).toMatchObject({
+      outcome: "failed",
+      error: { code: "ServerError", cause: outage },
+    });
+    expect(broker.messages(OUT)).toEqual([]);
+  });
+
+  it("keeps the original outcome when release() fails (best effort: the claim expires)", async () => {
+    const { broker, lines, processMessage } = setup({
+      store: (real) => ({ ...bound(real), release: () => Promise.reject(new Error("down")) }),
+    });
+
+    const result = await processMessage(appMessage(buildOrderXml({ id: "" }), "m-release"), http);
+    expect(result).toMatchObject({ outcome: "rejected", deadLettered: true });
+    expect(broker.messages(DLQ)).toHaveLength(1);
+    expect(lines()).toContainEqual(
+      expect.objectContaining({
+        severity: "WARNING",
+        message: "Could not release the idempotency claim",
+      }),
+    );
+    expect(lines()).toContainEqual(expect.objectContaining({ message: "Message rejected" }));
+  });
+
+  it("completes with the token it was given", async () => {
+    const completions: string[] = [];
+    const { processMessage } = setup({
+      store: (real) => ({
+        ...bound(real),
+        tryClaim: async (key) => {
+          const claim = await real.tryClaim(key);
+          return claim.status === "claimed" ? { ...claim, token: "token-1" } : claim;
+        },
+        complete: (key, token) => {
+          completions.push(`${key}:${token}`);
+          return Promise.resolve();
+        },
+      }),
+    });
+
+    await processMessage(sample(), http);
+    expect(completions).toEqual(["7a1e78c9:token-1"]);
+  });
+});
+
+/** Spreading a class instance loses its prototype methods; bind them explicitly. */
+function bound<T>(store: IdempotencyStore<T>): IdempotencyStore<T> {
+  return {
+    tryClaim: (key) => store.tryClaim(key),
+    complete: (key, token, result) => store.complete(key, token, result),
+    release: (key, token) => store.release(key, token),
+  };
+}

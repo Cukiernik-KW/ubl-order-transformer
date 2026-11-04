@@ -18,7 +18,7 @@ jobs:
   test:
     name: Lint, typecheck, test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,8 +31,8 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run format:check
-      - name: Tests with coverage thresholds
-        run: npm run coverage
+      - name: Tests with coverage thresholds (Firestore adapter against the emulator)
+        run: bash scripts/with-firestore-emulator.sh npm run coverage
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 

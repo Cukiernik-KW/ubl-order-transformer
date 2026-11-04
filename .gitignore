@@ -10,3 +10,16 @@ coverage/
 .env
 .env.*
 !.env.example
+
+# Terraform: providers cache, state, real variable values, saved plans
+# (.terraform.lock.hcl IS committed: it pins provider versions)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+*.tfbackend
+tfplan
+*.tfplan

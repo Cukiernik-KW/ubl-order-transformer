@@ -349,25 +349,29 @@ duplicates do not produce duplicate outputs.
   - a claimed key returns `in-progress`.
 - **`complete()` only after a successful publish.** Any failure, permanent or transient, calls
   `release()`, so a redelivery or a corrected resend can be processed.
-- **In-memory implementation:**
+- **In-memory implementation** (local runs, tests, `IDEMPOTENCY_STORE=memory`):
   - completed keys live for `IDEMPOTENCY_TTL_SECONDS`; claims live for 60 s, so a hung request cannot
     block a key forever;
   - expired entries are swept without timers;
   - check-and-set is atomic because there is no `await` between the read and the write.
+- **The deployment uses the shared Firestore store** (`IDEMPOTENCY_STORE=firestore`), see ADR-017.
+  The in-memory store alone is not enough there: Cloud Run routes requests by load, not by key, so with
+  N instances a duplicate reaches the instance that saw the original only about 1/N of the time. With
+  low traffic there is usually one warm instance, which hides the problem until a traffic peak.
 
 **Alternatives.**
 
-- **Firestore `create()` (fails if the document exists) or Redis `SET NX EX`:** the production choice.
-  They are shared across instances and survive restarts.
 - **Pub/Sub exactly-once delivery:** available only for pull subscriptions, not push.
+- **Session affinity on Cloud Run:** cookie-based and best effort; Pub/Sub sends no cookies. No help.
+- **Pin `max_instances = 1` with the in-memory store:** correct, but caps throughput and still loses
+  the store on every restart and new revision. Was the fallback if the Firestore adapter had not made it.
 
 **Consequences.**
 
-- The in-memory store is per instance and lost on restart. With several Cloud Run instances, duplicates
-  routed to different instances are not caught (documented, and a Production consideration).
 - **Crash window:** if the process dies after publishing but before `complete()`, the redelivery
   publishes again. Output is therefore at-least-once, and downstream consumers must be idempotent (they
-  can dedupe on the `messageId` attribute). The alternative is a transactional outbox.
+  can dedupe on the `messageId` attribute). The alternative is a transactional outbox. A shared store
+  does not close this window; nothing short of an outbox (or an idempotent consumer) does.
 
 ---
 
@@ -670,3 +674,64 @@ and avoid supply-chain risk.
 - The image is about 290 MB uncompressed, most of it the Node base image.
 - The full pipeline runs in about 2 minutes, and a broken build, test, format or vulnerable production
   dependency blocks the merge.
+
+---
+
+## ADR-017: Shared idempotency store on Firestore, with fencing tokens
+
+**Context.** The in-memory store (ADR-010) is per instance and lost on restart. The deployment runs up
+to two Cloud Run instances, and the idempotency bonus should hold for the deployed service, not only for
+a single process.
+
+**Decision.**
+
+- **`FirestoreIdempotencyStore`**, selected with `IDEMPOTENCY_STORE=firestore`, in Firestore Native,
+  database `(default)`, collection `idempotency`. Dependency: `@google-cloud/firestore` (the official
+  server client: same ADC and gax stack as the Pub/Sub client; `firebase-admin` would add a larger SDK
+  for no gain).
+- **Every operation is a Firestore transaction** (read, check, write), so the check-and-set is atomic
+  across instances. A plain `create()` with a transaction only on conflict would save a read, but it
+  gives two code paths; one path is simpler to reason about and to test, and the extra read is
+  negligible at this volume.
+- **Expiry is checked in the transaction** (`expiresAt` against the injected Clock), not left to the
+  Firestore TTL policy: TTL deletion runs eventually (up to about a day later). The TTL policy on
+  `expiresAt` only keeps the collection small.
+- **Fencing token.** `tryClaim` returns `{ status: "claimed", token }`; `complete` and `release` take
+  the token and are no-ops when it does not match. Without it, a slow instance whose claim expired and
+  was taken over would delete or overwrite the new holder's claim, and the next duplicate would publish
+  again. The token alone decides ownership: an expired claim that nobody took over can still be
+  completed by its holder, which records the already published output. The in-memory store follows the
+  same rule.
+- **Document id = `sha256(messageId)`.** `messageId` comes from partners: it may contain `/` (a path
+  separator in Firestore), be `..`, or exceed the 1500-byte id limit. The original key is a field.
+- **The stored output is a JSON string**, not a Firestore map: maps do not preserve key order, and the
+  output is returned verbatim to duplicates (`/messages` answers 200 with the same body).
+- **Failures are transient:** any Firestore error, or no answer within 5 s per operation, becomes
+  `ServerError` (push returns 500, Pub/Sub redelivers). The timeout keeps the worst case (claim +
+  publish retries + complete) inside the 60 s ack deadline.
+- **`release()` is best effort in the processor:** a failing release is logged at WARNING and the
+  original outcome stands. Otherwise a store outage during error handling would hide the original error
+  and skip the summary log; the claim expires after 60 s anyway.
+- **One contract test suite for both adapters** (`test/contract/idempotencyStore.contract.ts`): the
+  in-memory store runs it in every test run, the Firestore store runs it against the emulator (Docker,
+  pinned by digest; `npm run test:firestore`, and in CI). It includes 10 concurrent claims from 10
+  separate clients (exactly one wins), takeover of an expired claim, stale tokens, and keys with `/`.
+  Mutation check: with the transaction removed from `tryClaim`, the race test fails.
+- **IAM:** the runtime service account gets `roles/datastore.user` with an IAM condition limited to
+  this database. Firestore has no per-collection IAM, so this is the narrowest predefined grant.
+
+**Alternatives.**
+
+- **Redis (Memorystore) `SET key token NX EX 60`:** faster and claim expiry is built in, but it needs a
+  VPC connector or Direct VPC egress and has a fixed monthly cost. Firestore is serverless and fits a
+  scale-to-zero service.
+- **Cloud SQL with a unique constraint:** strong and familiar, but an always-on instance for one table.
+- **Business dedupe on `orderId`:** a different question (an order may be resent with changes).
+
+**Consequences.**
+
+- Two extra Firestore round trips per message (claim and complete); free tier covers this volume.
+- With the shared store, `max_instances` can be raised (capped at 2 here only as a cost guardrail).
+- Output stays at-least-once because of the crash window between publish and `complete()` (ADR-010).
+- Clock skew between instances shifts claim expiry by the skew; Cloud Run hosts are NTP-synchronised,
+  and the 60 s claim TTL is far larger than any realistic skew.

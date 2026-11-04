@@ -86,21 +86,33 @@ export function createProcessor(deps: ProcessorDeps): Processor {
       }
     }
 
+    /**
+     * Best effort: if the store is down, a throw here would hide the original error and skip the
+     * summary log. The claim then simply expires (claim TTL) and a redelivery can take it over.
+     */
+    async function releaseClaim(claim: { key: string; token: string }): Promise<void> {
+      try {
+        await idempotencyStore.release(claim.key, claim.token);
+      } catch (releaseError) {
+        log.warn({ err: releaseError }, "Could not release the idempotency claim");
+      }
+    }
+
     async function run(): Promise<ProcessResult> {
-      let claimedKey: string | undefined;
+      let claim: { key: string; token: string } | undefined;
       try {
         // Step 1: validate.
         const message = parseAppMessage(raw);
 
         // Idempotency: claim right after validation, so duplicates are never parsed again.
-        const claim = await idempotencyStore.tryClaim(message.messageId);
-        if (claim.status === "completed") {
-          return { outcome: "duplicate", messageId: message.messageId, output: claim.result };
+        const claimResult = await idempotencyStore.tryClaim(message.messageId);
+        if (claimResult.status === "completed") {
+          return { outcome: "duplicate", messageId: message.messageId, output: claimResult.result };
         }
-        if (claim.status === "in-progress") {
+        if (claimResult.status === "in-progress") {
           return { outcome: "in-progress", messageId: message.messageId };
         }
-        claimedKey = message.messageId;
+        claim = { key: message.messageId, token: claimResult.token };
 
         // Steps 2-4: decode, parse, transform (pure domain functions).
         const xmlBytes = decodeBase64Strict(message.document);
@@ -122,11 +134,11 @@ export function createProcessor(deps: ProcessorDeps): Processor {
         );
         // Crash window: if the process dies between publish and complete, a redelivery publishes
         // again. Output is at-least-once, so downstream consumers must be idempotent.
-        await idempotencyStore.complete(message.messageId, output);
+        await idempotencyStore.complete(claim.key, claim.token, output);
         return { outcome: "published", messageId: message.messageId, output };
       } catch (caught) {
         // Any failure frees the key: a redelivery (transient) or a corrected resend (permanent) can retry.
-        if (claimedKey) await idempotencyStore.release(claimedKey);
+        if (claim) await releaseClaim(claim);
 
         const error = caught instanceof AppError ? caught : serverError(caught);
         if (!error.permanent) {

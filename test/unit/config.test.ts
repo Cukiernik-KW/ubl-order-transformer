@@ -13,7 +13,10 @@ describe("loadConfig", () => {
       PUBLISH_RETRY_BASE_MS: 200,
       PUBLISH_RETRY_MAX_MS: 5000,
       PUBLISH_TIMEOUT_MS: 5000,
+      IDEMPOTENCY_STORE: "memory",
       IDEMPOTENCY_TTL_SECONDS: 86400,
+      IDEMPOTENCY_COLLECTION: "idempotency",
+      FIRESTORE_DATABASE_ID: "(default)",
       MAX_BODY_BYTES: 1048576,
     });
   });
