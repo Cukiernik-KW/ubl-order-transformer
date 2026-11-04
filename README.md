@@ -45,3 +45,14 @@ The specification leaves these points open. Each one is explained in [docs/DECIS
   dead-letter policy moves the original message to `orders.failed`.
 - The idempotency store in this version is in memory: it is per instance and does not survive restarts
   (see Production considerations).
+
+### HTTP (ADR-012, ADR-013)
+
+- `POST /messages` (the spec's "endpoint for validation") also **publishes** a valid order to
+  `orders.transformed` and returns it with 200.
+- `POST /pubsub/push` acknowledges (200) invalid messages once their error record is on
+  `orders.failed`, so Pub/Sub does not redeliver them. It returns 500 only when retrying can help.
+- Additions to the spec's error codes: `409 DuplicateInProgress` (the same `messageId` is being
+  processed), `413` for a body larger than `MAX_BODY_BYTES`, and `404 NotFound`.
+- Error bodies include `details` only when it adds information; single-issue errors match the spec
+  exactly.

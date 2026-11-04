@@ -7,6 +7,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
+      // Process entrypoint (wiring, signals, listen): verified by running the container, not unit tests.
+      exclude: ["src/server.ts"],
       reporter: ["text", "html"],
     },
   },

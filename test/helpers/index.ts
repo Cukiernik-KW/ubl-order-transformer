@@ -30,3 +30,21 @@ export function captureLogger(): { logger: Logger; lines: () => Record<string, u
 }
 
 export const noSleep = () => Promise.resolve();
+
+/** Wraps an application message (or raw text) the way a Pub/Sub push subscription delivers it. */
+export function pushEnvelope(
+  payload: unknown,
+  options: { pubsubMessageId?: string; deliveryAttempt?: number } = {},
+) {
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload);
+  return {
+    message: {
+      data: Buffer.from(text, "utf8").toString("base64"),
+      messageId: options.pubsubMessageId ?? "ps-1",
+      publishTime: "2026-07-27T12:00:01Z",
+      attributes: {},
+    },
+    subscription: "projects/test/subscriptions/orders.ubl.received.transformer",
+    ...(options.deliveryAttempt === undefined ? {} : { deliveryAttempt: options.deliveryAttempt }),
+  };
+}

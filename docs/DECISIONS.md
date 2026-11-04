@@ -396,3 +396,103 @@ duration metrics. Cloud Run forwards stdout to Cloud Logging, which parses JSON 
 - **OpenTelemetry metrics and traces:** the production upgrade, more setup than this assignment needs.
 
 **Consequences.** One Cloud Logging query on `jsonPayload.messageId` shows a message's whole journey.
+
+---
+
+## ADR-012: Two HTTP entry points, and status codes vs Pub/Sub push semantics
+
+**Context.**
+
+- The spec asks for an "endpoint for validation" that returns 400/500 errors. It also asks the service
+  to consume a Pub/Sub subscription and to run on Cloud Run, where the natural consumer is a **push
+  subscription**.
+- Pub/Sub push treats only 102, 200, 201, 202 and 204 as an ack. **Any other status, 400 included, is a
+  nack**, and the message is redelivered with backoff until the dead-letter policy gives up. A 400 for
+  broken XML would turn every bad message into a poison message that is retried pointlessly.
+
+**Decision.**
+
+- **`POST /messages`** takes the application message directly and follows the spec's contract exactly:
+  - 200 with the transformed order (also for a duplicate, with the stored output);
+  - 400 for bad input;
+  - 500 for transient failures.
+- **`POST /pubsub/push`** takes the push envelope and chooses statuses for ack/nack semantics:
+  - published or duplicate → 200;
+  - rejected **and** dead-lettered → **200** (ack; the message is safely on `orders.failed`);
+  - rejected but the DLQ publish failed → 500;
+  - transient failure → 500;
+  - in progress → 409, so Pub/Sub redelivers later.
+- **The push response body is the same JSON** as on `/messages`. Pub/Sub ignores it, but it helps when
+  debugging.
+- **Push edge cases:**
+  - an invalid **envelope** returns 400 with no DLQ record (real Pub/Sub never sends one, so it is a
+    misconfigured or foreign caller);
+  - **`data` that is not JSON** (for example raw XML published instead of the app message) is bad
+    partner content: it is rejected, dead-lettered with the raw text, and acked.
+- **Extensions to the spec's error codes:**
+  - `DuplicateInProgress` (409);
+  - 413 for an oversized body (code `ValidationError`);
+  - 404 `NotFound`.
+- **Error bodies carry `details`** only when it adds information (several issues, or a parser position),
+  so single-issue errors match the spec byte for byte.
+
+**Alternatives.**
+
+- **Always return the spec's 400 on push and let the dead-letter policy catch it:** simpler code, but
+  every bad message is delivered `max_delivery_attempts` times, wastes instances and delays the DLQ by
+  minutes. Rejected.
+- **A single endpoint, with a push subscription in "no-wrapper" (payload unwrapping) mode:** Pub/Sub
+  would POST the raw app message, so one handler could serve both cases. Rejected: the two callers need
+  different status semantics (spec 400 versus ack-on-permanent), and wrapped mode gives `deliveryAttempt`
+  and the Pub/Sub message id in the body.
+- **A pull subscriber instead of push:** on Cloud Run, a long-running pull loop needs always-on CPU and
+  minimum instances. Push lets Cloud Run scale to zero.
+
+**Consequences.** Every message that reaches the push endpoint ends in exactly one of `orders.transformed`
+or `orders.failed`. The HTTP mapping is a pure function per endpoint with an exhaustive `switch`.
+
+---
+
+## ADR-013: Runtime: configuration, health check, body handling, shutdown
+
+**Context.** The service runs as a Cloud Run container. It is configured through environment variables,
+gets SIGTERM before it is stopped, and receives bodies from Pub/Sub or from people using curl.
+
+**Decision.**
+
+- **Configuration** is validated once, at startup, with Zod (`loadConfig(env)`, a pure function). An
+  invalid value stops the process with **every** problem listed (fail fast). Numbers are coerced from
+  strings, and empty strings count as unset.
+- **Health check at `GET /health`, not `/healthz`.** Cloud Run's frontend reserves some URL paths ending
+  in `z`, so `/healthz` may never reach the container.
+- **Bodies are parsed as JSON regardless of Content-Type.** `curl -d` sends form-urlencoded by default,
+  which would otherwise produce an empty body and a misleading "Message is required.". This is safe:
+  the service is behind IAM, and it has no cookies, so CSRF does not apply. An empty request is reported
+  as "Message is required.".
+- **Body limit:** `MAX_BODY_BYTES` (1 MB by default). The push path carries Base64 inside Base64
+  (about ×1.78), so the XML limit is about 560 KB via push. Raise the limit together with Cloud Run
+  memory if needed.
+- **`createApp(deps)` builds the app without listening.** `server.ts` is the composition root: config,
+  logger, adapters (`PUBLISHER=memory|pubsub`), processor, then `listen`.
+- **Graceful shutdown on SIGTERM:**
+  1. stop accepting connections;
+  2. let in-flight requests finish;
+  3. close idle keep-alive sockets;
+  4. flush Pub/Sub batches;
+  5. exit.
+
+  A hard 9 s timeout applies, because Cloud Run kills the container about 10 s after SIGTERM.
+
+- `x-powered-by` is disabled.
+
+**Alternatives.**
+
+- **Reading `process.env` wherever a value is needed:** typos then surface only on the first message.
+- **Exiting immediately on SIGTERM:** in-flight messages would be nacked by the timeout, and batched
+  publishes could be lost.
+
+**Consequences.**
+
+- `server.ts` is excluded from unit-test coverage (it is wiring and signals). It is verified by running
+  the container.
+- Signal handling cannot be exercised on Windows. It is tested in Docker (Stage 7).
