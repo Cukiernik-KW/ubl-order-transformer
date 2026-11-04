@@ -1,0 +1,25 @@
+# Local stack with the shared idempotency store: the service + the Firestore emulator. No GCP needed.
+#   docker compose up --build
+#   curl -s localhost:8080/messages -H 'content-type: application/json' --data @samples/message.valid.json
+services:
+  firestore:
+    # Pinned by digest (the "emulators" tag moves); same image as scripts/with-firestore-emulator.sh.
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256:c3b114528245d315af73d92d95d8e2fed9747ce29003ad46232f22b4542da036
+    command: gcloud emulators firestore start --host-port=0.0.0.0:8080
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080"]
+      interval: 2s
+      retries: 30
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      IDEMPOTENCY_STORE: firestore
+      FIRESTORE_EMULATOR_HOST: firestore:8080
+      # Any id works with the emulator; "demo-" projects can never reach real GCP.
+      GOOGLE_CLOUD_PROJECT: demo-ubl-order-transformer
+    depends_on:
+      firestore:
+        condition: service_healthy
