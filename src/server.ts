@@ -12,7 +12,11 @@ import type { Publisher } from "./ports/publisher.js";
 // Cloud Run sends SIGTERM and kills the container ~10 s later; finish before that.
 const SHUTDOWN_TIMEOUT_MS = 9_000;
 
-function createPublisher(config: Config): { publisher: Publisher; close: () => Promise<void> } {
+function createPublisher(config: Config): {
+  publisher: Publisher;
+  close: () => Promise<void>;
+  debugBroker?: InMemoryBroker;
+} {
   if (config.PUBLISHER === "pubsub") {
     const publisher = new PubSubPublisher({
       projectId: config.GOOGLE_CLOUD_PROJECT,
@@ -20,7 +24,8 @@ function createPublisher(config: Config): { publisher: Publisher; close: () => P
     });
     return { publisher, close: () => publisher.close() };
   }
-  return { publisher: new InMemoryBroker(), close: () => Promise.resolve() };
+  const broker = new InMemoryBroker();
+  return { publisher: broker, close: () => Promise.resolve(), debugBroker: broker };
 }
 
 function readConfig(): Config {
@@ -36,7 +41,7 @@ function readConfig(): Config {
 function main(): void {
   const config = readConfig();
   const logger: Logger = createLogger({ level: config.LOG_LEVEL });
-  const { publisher, close: closePublisher } = createPublisher(config);
+  const { publisher, close: closePublisher, debugBroker } = createPublisher(config);
 
   const processMessage = createProcessor({
     publisher,
@@ -54,7 +59,12 @@ function main(): void {
     },
   });
 
-  const app = createApp({ processMessage, logger, maxBodyBytes: config.MAX_BODY_BYTES });
+  const app = createApp({
+    processMessage,
+    logger,
+    maxBodyBytes: config.MAX_BODY_BYTES,
+    debugBroker,
+  });
   const server = app.listen(config.PORT, () => {
     logger.info(
       { port: config.PORT, publisher: config.PUBLISHER, outputTopic: config.OUTPUT_TOPIC },

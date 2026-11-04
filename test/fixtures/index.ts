@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
+import { createAppMessage } from "../../src/local/messages.js";
 
 export function readFixture(name: string): string {
   return readFileSync(new URL(`./${name}`, import.meta.url), "utf8");
+}
+
+/** Files from samples/: the published examples are the test data, so they are tested too. */
+export function readSample(name: string): string {
+  return readFileSync(new URL(`../../samples/${name}`, import.meta.url), "utf8");
 }
 
 export interface LineSpec {
@@ -62,11 +68,7 @@ export function buildOrderXml(spec: OrderSpec = {}): string {
 </Order>`;
 }
 
-/** The application message the partner publishes: `{ messageId, timestamp, document: Base64(xml) }`. */
+/** The application message the partner publishes (fixed timestamp for stable tests). */
 export function appMessage(xml: string, messageId = "7a1e78c9") {
-  return {
-    messageId,
-    timestamp: "2026-07-27T12:00:00Z",
-    document: Buffer.from(xml, "utf8").toString("base64"),
-  };
+  return createAppMessage(xml, { messageId, timestamp: "2026-07-27T12:00:00Z" });
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AppError } from "../../src/domain/errors.js";
 import { decodeUtf8, parseXml } from "../../src/domain/xml.js";
-import { buildOrderXml, readFixture } from "../fixtures/index.js";
+import { buildOrderXml, readFixture, readSample } from "../fixtures/index.js";
 
 function expectInvalidXml(run: () => unknown): readonly string[] {
   try {
@@ -34,7 +34,7 @@ describe("decodeUtf8", () => {
 
 describe("parseXml", () => {
   it("parses the spec sample, stripping namespace prefixes", () => {
-    const doc = parseXml(readFixture("order.sample.xml"));
+    const doc = parseXml(readSample("order.xml"));
     expect(doc).toMatchObject({
       Order: {
         ID: "12347",
@@ -46,7 +46,7 @@ describe("parseXml", () => {
   });
 
   it("does not expose xmlns declarations as attributes", () => {
-    const doc = parseXml(readFixture("order.sample.xml"));
+    const doc = parseXml(readSample("order.xml"));
     expect(Object.keys(doc.Order as object).some((key) => key.includes("xmlns"))).toBe(false);
   });
 

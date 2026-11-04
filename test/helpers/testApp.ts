@@ -16,6 +16,7 @@ export function createTestApp(
     processMessage?: Processor;
     maxBodyBytes?: number;
     maxAttempts?: number;
+    debug?: boolean;
   } = {},
 ) {
   const clock = fixedClock("2026-07-27T12:01:00Z");
@@ -37,6 +38,7 @@ export function createTestApp(
     processMessage,
     logger,
     maxBodyBytes: options.maxBodyBytes ?? 1_048_576,
+    debugBroker: options.debug ? broker : undefined,
   });
   return { app, broker, clock, store, logLines: lines, processMessage };
 }

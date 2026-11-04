@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { AppError } from "../../src/domain/errors.js";
 import { mapUblOrder } from "../../src/domain/ublMapper.js";
 import { parseXml } from "../../src/domain/xml.js";
-import { buildOrderXml, readFixture, type OrderSpec } from "../fixtures/index.js";
+import { buildOrderXml, readFixture, type OrderSpec, readSample } from "../fixtures/index.js";
 
 const ctx = {
   messageId: "7a1e78c9",
@@ -28,12 +28,12 @@ function validationError(run: () => unknown): { message: string; details: readon
 
 describe("mapUblOrder: golden test", () => {
   it("maps the spec sample to exactly the spec output", () => {
-    const expected: unknown = JSON.parse(readFixture("expected-output.sample.json"));
-    expect(map(readFixture("order.sample.xml"))).toEqual(expected);
+    const expected: unknown = JSON.parse(readSample("expected-output.json"));
+    expect(map(readSample("order.xml"))).toEqual(expected);
   });
 
   it("produces keys in the spec order", () => {
-    const output = map(readFixture("order.sample.xml"));
+    const output = map(readSample("order.xml"));
     expect(Object.keys(output)).toEqual(["messageId", "transformedAt", "order"]);
     expect(Object.keys(output.order)).toEqual([
       "orderId",
@@ -118,7 +118,7 @@ describe("mapUblOrder: field rules", () => {
 
 describe("mapUblOrder: validation errors", () => {
   it("requires the root element to be Order", () => {
-    const xml = readFixture("order.sample.xml")
+    const xml = readSample("order.xml")
       .replace(/<Order\b/, "<Invoice")
       .replace("</Order>", "</Invoice>");
     expect(validationError(() => map(xml)).message).toBe("Root element must be Order.");

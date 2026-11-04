@@ -20,6 +20,8 @@
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
     "coverage": "vitest run --coverage",
+    "samples": "tsx scripts/generate-samples.ts",
+    "encode": "tsx scripts/encode-xml.ts",
     "simulate": "tsx scripts/simulate.ts",
     "publish:local": "tsx scripts/publish-local.ts"
   },

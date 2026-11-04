@@ -1,10 +1,10 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { appMessage, buildOrderXml, readFixture } from "../fixtures/index.js";
+import { appMessage, buildOrderXml, readSample } from "../fixtures/index.js";
 import { pushEnvelope } from "../helpers/index.js";
 import { createTestApp, DLQ_TOPIC, OUTPUT_TOPIC } from "../helpers/testApp.js";
 
-const sample = () => appMessage(readFixture("order.sample.xml"));
+const sample = () => appMessage(readSample("order.xml"));
 
 describe("GET /health", () => {
   it("answers 200", async () => {
@@ -260,5 +260,19 @@ describe("HTTP edge cases", () => {
     const { app } = createTestApp();
     const res = await request(app).get("/health");
     expect(res.headers["x-powered-by"]).toBeUndefined();
+  });
+});
+
+describe("GET /debug/topics/:name (in-memory mode only)", () => {
+  it("lists what was published to a topic", async () => {
+    const { app } = createTestApp({ debug: true });
+    await request(app).post("/messages").send(sample());
+    const res = await request(app).get(`/debug/topics/${OUTPUT_TOPIC}`).expect(200);
+    expect(res.body).toMatchObject({ topic: OUTPUT_TOPIC, count: 1 });
+  });
+
+  it("does not exist without the in-memory broker (PUBLISHER=pubsub)", async () => {
+    const { app } = createTestApp();
+    await request(app).get(`/debug/topics/${OUTPUT_TOPIC}`).expect(404);
   });
 });

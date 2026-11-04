@@ -4,7 +4,7 @@ import { InMemoryIdempotencyStore } from "../../src/adapters/inMemoryIdempotency
 import type { TransformedOrder } from "../../src/domain/types.js";
 import { createProcessor, type ProcessContext } from "../../src/pipeline/processor.js";
 import type { Publisher } from "../../src/ports/publisher.js";
-import { appMessage, buildOrderXml, readFixture } from "../fixtures/index.js";
+import { appMessage, buildOrderXml, readSample } from "../fixtures/index.js";
 import { captureLogger, fixedClock, noSleep } from "../helpers/index.js";
 
 const OUT = "orders.transformed";
@@ -28,7 +28,7 @@ function setup(options: { publisher?: (broker: InMemoryBroker) => Publisher } = 
   return { broker, clock, store, lines, processMessage };
 }
 
-const sample = () => appMessage(readFixture("order.sample.xml"));
+const sample = () => appMessage(readSample("order.xml"));
 
 describe("processor: happy path", () => {
   it("publishes the transformed order with messageId and orderId attributes", async () => {

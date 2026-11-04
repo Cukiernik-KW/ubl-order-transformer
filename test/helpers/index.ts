@@ -1,4 +1,5 @@
 import { Writable } from "node:stream";
+import { wrapInPushEnvelope } from "../../src/local/messages.js";
 import { createLogger, type Logger } from "../../src/observability/logger.js";
 import type { Clock } from "../../src/ports/clock.js";
 
@@ -36,15 +37,10 @@ export function pushEnvelope(
   payload: unknown,
   options: { pubsubMessageId?: string; deliveryAttempt?: number } = {},
 ) {
-  const text = typeof payload === "string" ? payload : JSON.stringify(payload);
-  return {
-    message: {
-      data: Buffer.from(text, "utf8").toString("base64"),
-      messageId: options.pubsubMessageId ?? "ps-1",
-      publishTime: "2026-07-27T12:00:01Z",
-      attributes: {},
-    },
+  return wrapInPushEnvelope(payload, {
+    pubsubMessageId: options.pubsubMessageId ?? "ps-1",
+    deliveryAttempt: options.deliveryAttempt,
+    publishTime: "2026-07-27T12:00:01Z",
     subscription: "projects/test/subscriptions/orders.ubl.received.transformer",
-    ...(options.deliveryAttempt === undefined ? {} : { deliveryAttempt: options.deliveryAttempt }),
-  };
+  });
 }

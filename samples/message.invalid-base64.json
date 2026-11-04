@@ -1,0 +1,5 @@
+{
+  "messageId": "invalid-base64-1",
+  "timestamp": "2026-07-27T12:00:00Z",
+  "document": "This is not Base64!"
+}

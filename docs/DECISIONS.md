@@ -557,3 +557,52 @@ interaction between our status codes and Pub/Sub redelivery, which cannot be exe
   - OIDC authentication;
   - IAM;
   - Cloud Run signal handling.
+
+---
+
+## ADR-015: Local simulation and sample messages
+
+**Context.** The spec requires "a local mechanism to simulate messages" (a local JSON message file, an
+in-memory publisher/subscriber) and documentation on "how to publish test messages", for reviewers who
+have no Pub/Sub project.
+
+**Decision.**
+
+- **`samples/`** holds the spec's XML (`order.xml`), the app messages built from it (valid, invalid
+  Base64, invalid XML, missing Order ID), a push envelope and `expected-output.json`.
+  - The messages are **generated** by `npm run samples` (deterministic ids and timestamps), never edited
+    by hand.
+  - **`expected-output.json` is NOT generated.** It is the spec's example output, so golden tests compare
+    the code against the spec and not against itself.
+  - Tests read `samples/` directly, so the published examples are tested examples.
+- **`npm run simulate`** runs the whole flow in one process:
+  - partner publishes to `orders.ubl.received`;
+  - a local push subscription delivers to the processor;
+  - the result goes to `orders.transformed` or `orders.failed`.
+
+  The subscription (`src/local/pushSubscription.ts`) does not use HTTP, but uses the **same** envelope
+  decoding and the **same** status mapping as `POST /pubsub/push`, so ack/nack decisions are identical.
+  `--fail-publishes` and `--max-delivery-attempts` demonstrate retries and dead-lettering live.
+
+- **`npm run publish:local`** POSTs a sample to a running service (`/messages`, or `/pubsub/push` with
+  `--push` or for an envelope file). With `--url` and `--token` the same command targets Cloud Run.
+  It uses the built-in `fetch`, so there is no new dependency.
+- **`npm run encode`** turns any XML file into an app message or a push envelope.
+- **`GET /debug/topics/:name`** is **registered only in memory mode**. With `PUBLISHER=pubsub` the route
+  does not exist, so it cannot be exposed by mistake.
+- **The message builders live in `src/local/messages.ts`** and are shared by the scripts and the tests.
+- **The spec's sample XML had CRLF line endings.** It is stored with LF (`.gitattributes eol=lf`), and the
+  samples are generated from the LF file, so the Base64 in the samples matches the file on every OS.
+
+**Alternatives.**
+
+- **Running `simulate` through HTTP (Express plus fetch):** more moving parts and a port to manage. The
+  HTTP path is already covered by the integration tests and by `publish:local`.
+- **The Pub/Sub emulator for local runs:** more realistic, but it needs Java or Docker and skips
+  dead-letter policies, which is what the simulation is meant to show.
+
+**Consequences.**
+
+- A reviewer can see the full flow, including retries and the DLQ, in seconds, without GCP.
+- In memory mode, published messages accumulate in memory. That is fine for local use, and this mode is
+  never used on Cloud Run.

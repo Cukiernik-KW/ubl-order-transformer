@@ -1,6 +1,7 @@
 import express, { type Express } from "express";
 import { errorHandler, notFound } from "./http/errorHandler.js";
 import { createRoutes } from "./http/routes.js";
+import type { InMemoryBroker } from "./adapters/inMemoryBroker.js";
 import type { Logger } from "./observability/logger.js";
 import type { Processor } from "./pipeline/processor.js";
 
@@ -8,6 +9,8 @@ export interface AppDeps {
   processMessage: Processor;
   logger: Logger;
   maxBodyBytes: number;
+  /** Enables GET /debug/topics/:name (in-memory mode only). */
+  debugBroker?: InMemoryBroker;
 }
 
 /** Builds the HTTP app without listening, so tests drive it in memory (supertest) and server.ts owns the port. */
@@ -23,7 +26,7 @@ export function createApp(deps: AppDeps): Express {
       type: () => true,
     }),
   );
-  app.use(createRoutes(deps.processMessage));
+  app.use(createRoutes(deps.processMessage, deps.debugBroker));
   app.use(notFound);
   app.use(errorHandler(deps.logger, deps.maxBodyBytes));
   return app;

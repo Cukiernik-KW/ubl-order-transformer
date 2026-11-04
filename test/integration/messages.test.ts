@@ -1,6 +1,6 @@
 import request from "supertest";
 import { describe, expect, it } from "vitest";
-import { appMessage, buildOrderXml, readFixture } from "../fixtures/index.js";
+import { appMessage, buildOrderXml, readFixture, readSample } from "../fixtures/index.js";
 import { createTestApp, DLQ_TOPIC, OUTPUT_TOPIC } from "../helpers/testApp.js";
 
 const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
@@ -8,11 +8,11 @@ const b64 = (text: string) => Buffer.from(text, "utf8").toString("base64");
 describe("POST /messages: valid message", () => {
   it("returns 200 with exactly the expected output and publishes it once", async () => {
     const { app, broker } = createTestApp();
-    const expected: unknown = JSON.parse(readFixture("expected-output.sample.json"));
+    const expected: unknown = JSON.parse(readSample("expected-output.json"));
 
     const res = await request(app)
       .post("/messages")
-      .send(appMessage(readFixture("order.sample.xml")))
+      .send(appMessage(readSample("order.xml")))
       .expect(200);
 
     expect(res.body).toEqual(expected);
@@ -137,7 +137,7 @@ describe("POST /messages: malformed messages", () => {
     const { app, broker } = createTestApp({ maxBodyBytes: 200 });
     await request(app)
       .post("/messages")
-      .send(appMessage(readFixture("order.sample.xml")))
+      .send(appMessage(readSample("order.xml")))
       .expect(413);
     expect(broker.messages(OUTPUT_TOPIC)).toEqual([]);
     expect(broker.messages(DLQ_TOPIC)).toEqual([]);
@@ -151,7 +151,7 @@ describe("POST /messages: transient failures", () => {
 
     await request(app)
       .post("/messages")
-      .send(appMessage(readFixture("order.sample.xml")))
+      .send(appMessage(readSample("order.xml")))
       .expect(200);
     expect(broker.messages(OUTPUT_TOPIC)).toHaveLength(1);
   });

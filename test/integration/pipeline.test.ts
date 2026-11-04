@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Publisher } from "../../src/ports/publisher.js";
-import { appMessage, buildOrderXml, readFixture } from "../fixtures/index.js";
+import { appMessage, buildOrderXml, readSample } from "../fixtures/index.js";
 import { connectPushSubscription, INPUT_TOPIC } from "../helpers/pushBridge.js";
 import { createTestApp, DLQ_TOPIC, OUTPUT_TOPIC } from "../helpers/testApp.js";
 
@@ -8,8 +8,8 @@ import { createTestApp, DLQ_TOPIC, OUTPUT_TOPIC } from "../helpers/testApp.js";
  * Full loop, as on GCP: partner publishes to the input topic -> push subscription -> real HTTP app
  * -> output / DLQ topics. Only the Pub/Sub transport is in memory; none of our code is mocked.
  */
-const sample = () => appMessage(readFixture("order.sample.xml"));
-const expectedOutput: unknown = JSON.parse(readFixture("expected-output.sample.json"));
+const sample = () => appMessage(readSample("order.xml"));
+const expectedOutput: unknown = JSON.parse(readSample("expected-output.json"));
 
 /** Counts publish attempts to the output topic, and optionally fails them for one messageId. */
 function countingPublisher(options: { alwaysFailFor?: string } = {}) {
