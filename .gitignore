@@ -1,0 +1,12 @@
+# Private local materials (not part of the deliverable)
+local/
+
+# Dependencies and build output
+node_modules/
+dist/
+coverage/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
