@@ -54,5 +54,7 @@ The specification leaves these points open. Each one is explained in [docs/DECIS
   `orders.failed`, so Pub/Sub does not redeliver them. It returns 500 only when retrying can help.
 - Additions to the spec's error codes: `409 DuplicateInProgress` (the same `messageId` is being
   processed), `413` for a body larger than `MAX_BODY_BYTES`, and `404 NotFound`.
+- Requests rejected before the pipeline (body is not JSON, body too large, invalid push envelope) get
+  400/413 but are **not** recorded on `orders.failed`.
 - Error bodies include `details` only when it adds information; single-issue errors match the spec
   exactly.

@@ -496,3 +496,64 @@ gets SIGTERM before it is stopped, and receives bodies from Pub/Sub or from peop
 - `server.ts` is excluded from unit-test coverage (it is wiring and signals). It is verified by running
   the container.
 - Signal handling cannot be exercised on Windows. It is tested in Docker (Stage 7).
+
+---
+
+## ADR-014: Testing strategy
+
+**Context.** The spec asks for unit tests (Base64, XML parsing, mapping, validation) and integration tests
+(valid message, malformed message, publishing, error handling). The critical behaviour is the
+interaction between our status codes and Pub/Sub redelivery, which cannot be exercised without a broker.
+
+**Decision.**
+
+- **Unit tests** (`test/unit`) cover pure functions and single components:
+  - domain: Base64, XML, mapper, message validation, errors;
+  - retry, idempotency store, broker, processor, config, push envelope;
+  - `PubSubPublisher`, against a fake client (no network).
+- **Integration tests** (`test/integration`) run the **real Express app, processor, retry and
+  idempotency**. Only the transport is in memory. **None of our own code is mocked.**
+  - `/messages` and `/pubsub/push` through supertest, with no open port.
+  - **The full push loop:** a test helper subscribes the `InMemoryBroker` to the input topic and POSTs
+    every delivery to `/pubsub/push`. It acks on 102/200/201/202/204, redelivers otherwise, and
+    dead-letters after `maxDeliveryAttempts`, which mirrors the platform behaviour.
+- **Test doubles we do use:**
+  - a fixed `Clock`, for golden outputs;
+  - injected `sleep` and `random`, so retries are instant;
+  - `broker.failPublishes(topic, n)` to simulate outages;
+  - a gated publisher, for the concurrency test.
+- **Key behaviours are tested as stated in the docs:**
+  - a poison message is delivered exactly once;
+  - a long outage gives 5 deliveries × 3 in-app attempts = 15 publish attempts, then the platform
+    dead-letters the original;
+  - **the invariant itself:** a mixed batch is sent, and every message is checked to land in exactly one
+    of `orders.transformed` / `orders.failed`.
+- **Golden output:** `test/fixtures/expected-output.sample.json` is the spec's example output and is
+  compared byte for byte (the fixed clock gives `transformedAt`).
+- **Mutation checks** were done by hand on key lines, to confirm that tests fail when the behaviour
+  breaks:
+  - removing the Base64 round-trip, `isArray`, the claim `release()` or `complete()`;
+  - retrying permanent errors;
+  - answering 400 instead of 200 for a dead-lettered push.
+- **Coverage thresholds of 90%** (lines, branches, functions, statements) fail the build. `server.ts` is
+  excluded from coverage.
+- **Transport-level errors on `/messages`** (body not JSON, body too large) return 400/413 **without** a
+  DLQ record: the message never entered the pipeline, and the caller still holds it. This corrects the
+  original plan, which listed "non-JSON body → `orders.failed`".
+
+**Alternatives.**
+
+- **Mocking the processor in the HTTP tests:** faster to write, but it would not catch mismatches between
+  layers. The `details` duplication bug was found by running the real stack.
+- **Testing against the Pub/Sub emulator:** more realistic transport, but slower and it needs Java or
+  Docker in CI. It is kept as an option, because the client honours `PUBSUB_EMULATOR_HOST`. The real
+  service is exercised by the end-to-end test on GCP.
+
+**Consequences.**
+
+- About 200 tests run in about 2 s with no network.
+- What is NOT covered by automated tests until the GCP end-to-end test:
+  - the real Pub/Sub client on the wire;
+  - OIDC authentication;
+  - IAM;
+  - Cloud Run signal handling.

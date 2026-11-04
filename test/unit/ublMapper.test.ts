@@ -28,33 +28,8 @@ function validationError(run: () => unknown): { message: string; details: readon
 
 describe("mapUblOrder: golden test", () => {
   it("maps the spec sample to exactly the spec output", () => {
-    const output = map(readFixture("order.sample.xml"));
-    expect(output).toEqual({
-      messageId: "7a1e78c9",
-      transformedAt: "2026-07-27T12:01:00Z",
-      order: {
-        orderId: "12347",
-        externalOrganizationId: "1234567",
-        reference: "test-order",
-        orderDate: "2025-01-01",
-        lines: [
-          {
-            lineId: 1,
-            itemId: "100100",
-            quantity: 1,
-            unitOfMeasure: "EA",
-            comment: "Optional OrderLine Note",
-          },
-          {
-            lineId: 2,
-            itemId: "100103",
-            quantity: 1,
-            unitOfMeasure: "EA",
-            comment: "Optional OrderLine Note",
-          },
-        ],
-      },
-    });
+    const expected: unknown = JSON.parse(readFixture("expected-output.sample.json"));
+    expect(map(readFixture("order.sample.xml"))).toEqual(expected);
   });
 
   it("produces keys in the spec order", () => {

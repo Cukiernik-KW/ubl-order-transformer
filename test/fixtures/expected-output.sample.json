@@ -1,0 +1,26 @@
+{
+  "messageId": "7a1e78c9",
+  "transformedAt": "2026-07-27T12:01:00Z",
+  "order": {
+    "orderId": "12347",
+    "externalOrganizationId": "1234567",
+    "reference": "test-order",
+    "orderDate": "2025-01-01",
+    "lines": [
+      {
+        "lineId": 1,
+        "itemId": "100100",
+        "quantity": 1,
+        "unitOfMeasure": "EA",
+        "comment": "Optional OrderLine Note"
+      },
+      {
+        "lineId": 2,
+        "itemId": "100103",
+        "quantity": 1,
+        "unitOfMeasure": "EA",
+        "comment": "Optional OrderLine Note"
+      }
+    ]
+  }
+}
