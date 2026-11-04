@@ -735,3 +735,65 @@ a single process.
 - Output stays at-least-once because of the crash window between publish and `complete()` (ADR-010).
 - Clock skew between instances shifts claim expiry by the skew; Cloud Run hosts are NTP-synchronised,
   and the 60 s claim TTL is far larger than any realistic skew.
+
+---
+
+## ADR-018: Infrastructure as code and deployment on GCP
+
+**Context.** The service must run on Cloud Run behind a Pub/Sub push subscription, with a DLQ, and the
+whole stack should be reproducible, least-privilege and cheap to keep running for the review period.
+
+**Decision.**
+
+- **Terraform** (`infra/`, google provider `~> 7.0`, lock file committed) in one root module; the
+  stack is small enough that modules would add indirection without reuse.
+- **Remote state in GCS** with a partial backend configuration (`backend.tfbackend`, gitignored): it
+  reuses an existing versioned bucket with public access prevention, under its own prefix. Real values
+  live in gitignored `terraform.tfvars`; only `*.example` files are committed.
+- **Push subscription `orders.ubl.received.transformer`:**
+  - OIDC token from a dedicated push service account; audience = the service URL;
+  - `ack_deadline_seconds = 60`, above the app's worst-case retry budget (about 31 s);
+  - `retry_policy` 10 s to 600 s (platform retry layer);
+  - `dead_letter_policy` to `orders.failed`, `max_delivery_attempts` a validated variable (5 to 100);
+  - `expiration_policy { ttl = "" }`: the default would delete an idle subscription after 31 days.
+- **Pull subscriptions `orders.transformed.ops` and `orders.failed.ops`** (7-day retention): a topic
+  without subscriptions drops messages, so without them the DLQ would be a black hole. They also serve
+  the demo and the E2E test.
+- **Cloud Run v2:** no `allUsers` invoker (requests need an identity token of a principal with
+  `run.invoker`; Cloud Run verifies it, the app has no JWT code); min 0 / max 2 instances (cost
+  guardrail); request-based CPU; startup probe on `/health`; `deletion_protection = false` so the demo
+  stack can be destroyed.
+- **IAM, all `*_member` on single resources** (additive; `*_binding` would take over the whole role on
+  the resource and silently remove grants made elsewhere):
+  - runtime SA: `pubsub.publisher` on the two output topics only, `datastore.user` limited by an IAM
+    condition to the idempotency database;
+  - push SA: `run.invoker` on this service only;
+  - Pub/Sub service agent: `publisher` on `orders.failed` and `subscriber` on the push subscription.
+    Dead-lettering is done by Google's service agent, not by our accounts, and silently does nothing
+    without these grants. Token creation for the push OIDC token needs no grant in projects created
+    after 2021-04-08.
+- **Images in Artifact Registry, tagged with the git SHA**, built for `linux/amd64` (Cloud Run does
+  not run arm64 images). `scripts/deploy.sh` refuses uncommitted changes to files that go into the
+  image, so the tag always describes the content. A cleanup policy keeps the last 5 images.
+- **Bootstrap:** the registry must exist before the first push, and the service needs an image, so the
+  first deployment runs one targeted apply of the registry. Documented as a one-time step.
+- **Verification:** `terraform plan` is empty after apply (no drift); `test/e2e/gcp.e2e.test.ts`
+  (`E2E_GCP=1 npm run test:e2e`) and `scripts/e2e-gcp.sh` check valid, invalid and concurrent duplicate
+  messages on the real stack.
+
+**Alternatives.**
+
+- **`gcloud` commands in the README:** shorter, but not reproducible, reviewable or destroyable.
+- **Cloud Build** for the image: no local Docker needed, but extra API, permissions and a build SA for
+  one image; local `docker build` is what CI already runs.
+- **A placeholder image** for the first apply instead of the targeted apply: avoids `-target`, but the
+  first revision would not serve `/pubsub/push`, and every later apply depends on overriding it.
+- **`ingress = internal`:** Pub/Sub push still works, but demos and `curl` from a laptop would not;
+  IAM already blocks unauthenticated calls.
+
+**Consequences.**
+
+- `terraform destroy` removes everything including the Firestore database and the images; the state
+  bucket stays (it belongs to the bootstrap).
+- Found while deploying: an Artifact Registry cleanup condition `older_than = "0s"` is normalised away
+  by the API and caused a diff on every plan; `tag_state = "ANY"` means the same and is stable.

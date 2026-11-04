@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:unit": "vitest run test/unit",
     "test:integration": "vitest run test/integration",
+    "test:e2e": "vitest run test/e2e",
     "test:firestore": "bash scripts/with-firestore-emulator.sh vitest run test/integration/firestoreIdempotencyStore.test.ts",
     "coverage": "vitest run --coverage",
     "samples": "tsx scripts/generate-samples.ts",

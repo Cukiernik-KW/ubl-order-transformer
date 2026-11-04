@@ -1,0 +1,6 @@
+# Copy to terraform.tfvars (gitignored) and set your values.
+project_id = "your-gcp-project-id"
+# region              = "europe-central2"
+# max_delivery_attempts = 5
+# max_instances       = 2
+# image_tag is set by scripts/deploy.sh (git SHA)

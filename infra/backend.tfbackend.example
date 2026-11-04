@@ -1,0 +1,5 @@
+# Partial backend configuration for the "gcs" backend.
+# Copy to backend.tfbackend (gitignored), set your state bucket, then:
+#   terraform init -backend-config=backend.tfbackend
+
+bucket = "your-gcp-project-id-tfstate"
