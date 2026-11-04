@@ -61,3 +61,12 @@ export function buildOrderXml(spec: OrderSpec = {}): string {
   ${lines.map(lineXml).join("")}
 </Order>`;
 }
+
+/** The application message the partner publishes: `{ messageId, timestamp, document: Base64(xml) }`. */
+export function appMessage(xml: string, messageId = "7a1e78c9") {
+  return {
+    messageId,
+    timestamp: "2026-07-27T12:00:00Z",
+    document: Buffer.from(xml, "utf8").toString("base64"),
+  };
+}

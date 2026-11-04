@@ -34,3 +34,14 @@ The specification leaves these points open. Each one is explained in [docs/DECIS
 - At least one order line is required, and line IDs must be unique. Elements that UBL allows only once
   are rejected when repeated.
 - Validation errors list every issue in `details`; `message` is the first issue.
+
+### Processing (ADR-008 – ADR-010)
+
+- Duplicates are detected by the **application `messageId`**. A duplicate of a published message is not
+  published again; its stored output is returned.
+- A message that failed (for any reason) can be sent again with the same `messageId`.
+- Permanent errors (invalid input) produce an error record on `orders.failed`. Transient errors are
+  retried, first inside the service, then by Pub/Sub redelivery; when redelivery is exhausted, Pub/Sub's
+  dead-letter policy moves the original message to `orders.failed`.
+- The idempotency store in this version is in memory: it is per instance and does not survive restarts
+  (see Production considerations).

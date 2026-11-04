@@ -227,3 +227,172 @@ external DTDs.
 - Very large or very precise quantities are limited to IEEE-754 double precision (acceptable for order
   quantities).
 - A change in output shape needs a schema change, which makes the change explicit.
+
+---
+
+## ADR-007: Ports and adapters (hexagonal-lite)
+
+**Context.** The same processing logic must run against real Pub/Sub on Cloud Run, against an in-memory
+broker locally (the spec requires a local simulation), and in fast, deterministic tests.
+
+**Decision.** The processor depends only on three small interfaces (ports):
+
+- `Publisher.publish(topic, json, attributes)`;
+- `IdempotencyStore.tryClaim / complete / release`;
+- `Clock.now()`.
+
+Adapters implement them:
+
+- `PubSubPublisher`: the real client, ADC auth, `PUBSUB_EMULATOR_HOST` honoured by the library;
+- `InMemoryBroker`: publisher plus a push-style subscription with redelivery and dead-lettering;
+- `InMemoryIdempotencyStore`.
+
+The adapters are wired once, at startup. The idempotency port is async even though the in-memory version
+is synchronous, because real implementations (Firestore, Redis) are remote.
+
+**Alternatives.**
+
+- **Calling `@google-cloud/pubsub` directly from the processor:** less code, but tests then need the
+  emulator or module mocks.
+- **A DI container:** overkill for three dependencies; plain constructor and function injection is enough.
+
+**Consequences.**
+
+- Domain and pipeline tests run in milliseconds with no network.
+- `PubSubPublisher` itself is tested only with a fake client. The real wire behaviour is covered by the
+  end-to-end test on GCP.
+
+---
+
+## ADR-008: Processing outcomes and dead-lettering
+
+**Context.** Every message must end in a known state, and the HTTP layer needs that state to choose a
+status code. This matters most for push: Pub/Sub treats any non-2xx response as a nack and redelivers.
+
+**Decision.** `process()` returns a discriminated union instead of throwing:
+
+| Outcome       | Meaning                                                          | DLQ                                                             |
+| ------------- | ---------------------------------------------------------------- | --------------------------------------------------------------- |
+| `published`   | output published, key marked completed                           | –                                                               |
+| `duplicate`   | key already completed; stored output returned, nothing published | –                                                               |
+| `in-progress` | same key being processed concurrently                            | –                                                               |
+| `rejected`    | permanent error (bad input)                                      | app publishes an error record                                   |
+| `failed`      | transient error after retries                                    | none from the app; the platform's dead-letter policy handles it |
+
+- **App DLQ record:** `{ messageId, failedAt, error: { code, message, details }, originalMessage }` with
+  attributes `failureSource=app`, `errorCode` and `messageId` (when known). `originalMessage` makes replay
+  possible.
+- **Messages dead-lettered by the platform** (after `max_delivery_attempts`) are the raw original
+  message. They carry Pub/Sub's `CloudPubSubDeadLetterSource*` attributes and no `failureSource`, so
+  consumers of `orders.failed` can tell the two shapes apart.
+- **If publishing the DLQ record itself fails**, the result is `rejected` with `deadLettered: false` and
+  an ERROR log. The push endpoint then answers 500, so the message is redelivered and the platform DLQ
+  still catches it. `/messages` still answers 400, because the caller's input is still invalid.
+
+**Alternatives.**
+
+- **Throwing and mapping exceptions in the HTTP layer:** the outcomes `duplicate` and `in-progress` are
+  not errors, and a union lets the compiler check that every case is handled.
+- **Dead-lettering transient failures from the app:** the message might succeed on redelivery, so a
+  "failed" record would be a false positive.
+
+**Consequences.** On the push path, every accepted message ends in exactly one of `orders.transformed` or
+`orders.failed`.
+
+---
+
+## ADR-009: Retries: two layers, one in the process
+
+**Context.** Publishing can fail transiently. Pub/Sub also redelivers nacked push messages.
+`@google-cloud/pubsub` has its own built-in publish retry, which by default can run for minutes and
+could outlive the push subscription's ack deadline. Pub/Sub would then redeliver the message while the
+first attempt is still running.
+
+**Decision.**
+
+- **Layer 1, in the app:** `withRetry` uses exponential backoff with **full jitter**
+  (`random() × min(maxDelay, base × 2^(n-1))`).
+  - Only transient errors are retried. A permanent `AppError` fails immediately.
+  - Unknown errors count as transient.
+  - Configured by `PUBLISH_MAX_ATTEMPTS` and `PUBLISH_RETRY_BASE_MS`.
+- **The library's retry is disabled** (`gaxOpts: { retry: null }`, verified in the google-gax source),
+  with a per-attempt timeout (`PUBLISH_TIMEOUT_MS`, 5 s). The worst-case in-app budget
+  (3 × 5 s + backoff) stays below the 60 s ack deadline set in infra.
+- **Layer 2, the platform:** the subscription's `retry_policy` (exponential redelivery) plus
+  `dead_letter_policy.max_delivery_attempts`.
+- **`sleep` and `random` are injected**, so retry tests are instant and deterministic.
+
+**Alternatives.**
+
+- **Keeping the library retry:** that adds a hidden third layer with an unbounded-looking budget.
+- **"Equal" jitter or no jitter:** without jitter, many instances retry in lockstep (thundering herd).
+  Full jitter spreads the load best.
+
+**Consequences.** Exactly two retry layers to reason about, with a known worst-case latency per delivery.
+
+---
+
+## ADR-010: Idempotency
+
+**Context.** Pub/Sub push delivery is at-least-once, and partners may resend. The spec bonus asks that
+duplicates do not produce duplicate outputs.
+
+**Decision.**
+
+- **Key: the application `messageId`.** It is not the Pub/Sub message id, because a partner re-publishing
+  the same message gets a new Pub/Sub id but keeps its own. It is not the `orderId` either: that would be
+  business-level dedupe, which is a different question (an order can legitimately be resent with
+  changes).
+- **Claim right after Step 1** (once `messageId` is known):
+  - a completed key returns `duplicate` with the stored output, so `/messages` can answer 200 with the
+    same body;
+  - a claimed key returns `in-progress`.
+- **`complete()` only after a successful publish.** Any failure, permanent or transient, calls
+  `release()`, so a redelivery or a corrected resend can be processed.
+- **In-memory implementation:**
+  - completed keys live for `IDEMPOTENCY_TTL_SECONDS`; claims live for 60 s, so a hung request cannot
+    block a key forever;
+  - expired entries are swept without timers;
+  - check-and-set is atomic because there is no `await` between the read and the write.
+
+**Alternatives.**
+
+- **Firestore `create()` (fails if the document exists) or Redis `SET NX EX`:** the production choice.
+  They are shared across instances and survive restarts.
+- **Pub/Sub exactly-once delivery:** available only for pull subscriptions, not push.
+
+**Consequences.**
+
+- The in-memory store is per instance and lost on restart. With several Cloud Run instances, duplicates
+  routed to different instances are not caught (documented, and a Production consideration).
+- **Crash window:** if the process dies after publishing but before `complete()`, the redelivery
+  publishes again. Output is therefore at-least-once, and downstream consumers must be idempotent (they
+  can dedupe on the `messageId` attribute). The alternative is a transactional outbox.
+
+---
+
+## ADR-011: Structured logging
+
+**Context.** The spec bonus asks for structured logging, correlation by `messageId` and processing
+duration metrics. Cloud Run forwards stdout to Cloud Logging, which parses JSON lines.
+
+**Decision.**
+
+- **pino** writes JSON to stdout. The level is written as **`severity`** with Cloud Logging names
+  (`INFO`, `WARNING`, `ERROR`…) and the text as **`message`**. There are no pid or hostname fields,
+  because Cloud Run adds resource labels.
+- **One child logger per message**, carrying `messageId`, `pubsubMessageId`, `deliveryAttempt` and
+  `source`.
+- **One summary line per message:** `outcome`, `durationMs`, `orderId`, `documentBytes` and, on failure,
+  `errorCode`. This line is the basis for a log-based distribution metric (latency) and counter metrics
+  (outcomes).
+- **Durations use `performance.now()`**, a monotonic clock. The injectable `Clock` is business time
+  (`transformedAt`) and may be fixed in tests.
+- **The document is never logged** (size and possible personal data). Only byte size and `orderId`.
+
+**Alternatives.**
+
+- **`console.log` with JSON.stringify:** no levels, no child loggers.
+- **OpenTelemetry metrics and traces:** the production upgrade, more setup than this assignment needs.
+
+**Consequences.** One Cloud Logging query on `jsonPayload.messageId` shows a message's whole journey.

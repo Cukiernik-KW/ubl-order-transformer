@@ -1,4 +1,5 @@
 import { serverError, validationError } from "./errors.js";
+import { formatTimestamp } from "./time.js";
 import { TransformedOrderSchema, type OrderLine, type TransformedOrder } from "./types.js";
 import { ATTRIBUTE_PREFIX, TEXT_NODE, type XmlNode } from "./xml.js";
 
@@ -55,11 +56,6 @@ function parseXsdDate(value: string): string | undefined {
     date.getUTCMonth() === Number(m) - 1 &&
     date.getUTCDate() === Number(d);
   return isReal ? `${y}-${m}-${d}` : undefined;
-}
-
-/** ISO 8601 UTC with seconds precision, matching the spec example ("2026-07-27T12:01:00Z"). */
-function formatTimestamp(date: Date): string {
-  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
 function mapLine(line: unknown, position: number, issues: string[]): OrderLine | undefined {
