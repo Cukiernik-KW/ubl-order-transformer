@@ -38,6 +38,9 @@ docker run --rm -p 8080:8080 ubl-order-transformer
 curl -s localhost:8080/messages -H 'content-type: application/json' --data @samples/message.valid.json
 ```
 
+> On Windows PowerShell, `curl` is an alias for `Invoke-WebRequest` and `@file` means something else;
+> use Git Bash or WSL, or send the sample with `npm run publish:local -- samples/message.valid.json`.
+
 By default the container uses the in-memory publisher and idempotency store, so it needs nothing else.
 To run it with the shared idempotency store (Firestore emulator) instead:
 
